@@ -1,0 +1,16 @@
+{
+  "name": "runewmantest-lambda-function",
+  "version": "1.0.0",
+  "description": "A AWS Lambda function that accepts artificts and runs newman tests using those artifacts.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "aws-sdk": "^2.555.0",
+    "decompress": "^4.2.0",
+    "newman": "^4.5.5"
+  }
+}
