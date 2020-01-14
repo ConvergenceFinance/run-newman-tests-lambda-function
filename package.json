@@ -9,8 +9,8 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "aws-sdk": "^2.555.0",
+    "aws-sdk": "^2.602.0",
     "decompress": "^4.2.0",
-    "newman": "^4.5.5"
+    "newman": "^4.5.7"
   }
 }

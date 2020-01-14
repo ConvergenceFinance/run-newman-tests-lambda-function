@@ -15,24 +15,47 @@ const getArtifactURL = async (Bucket, Key) => {
     }
 }
 
-const httpRequest = (url) => {
-    return new Promise(
-        (resolve, reject) => {
-            const request = https.get(url, function (response) {
-                if (response.statusCode < 200 || response.statusCode >= 300) {
-                    reject(`An error occurred while fetching the file: ${url}`)
-                } else {
-                    resolve(response)
-                }
-            }).on("error", function (error) {
-                reject(error);
-            });
-        }
-    )
+const download = (url, dest) => {
+    return new Promise((resolve, reject) => {
+        const file = fs.createWriteStream(dest, { flags: "wx" });
+
+        const request = https.get(url, response => {
+            if (response.statusCode === 200) {
+                response.pipe(file);
+            } else {
+                file.close();
+                fs.unlink(dest, () => { }); // Delete temp file
+                reject(`Server responded with ${response.statusCode}: ${response.statusMessage}`);
+            }
+        });
+
+        request.on("error", err => {
+            file.close();
+            fs.unlink(dest, () => { }); // Delete temp file
+            reject(err.message);
+        });
+
+        file.on("finish", () => {
+            resolve();
+        });
+
+        file.on("error", err => {
+            file.close();
+
+            if (err.code === "EEXIST") {
+                reject("File already exists");
+            } else {
+                fs.unlink(dest, () => { }); // Delete temp file
+                reject(err.message);
+            }
+        });
+    });
 }
 
 exports.handler = async (event, context) => {
-    const tmpBuildArtifactPath = "/tmp/BuildArtifact.zip";
+    console.debug("[newman Lambda] Loaded index.handler")
+
+    const tmpBuildArtifactPath = "/tmp/BuildArtifact.zip"
     const jobMeta = event["CodePipeline.job"]
     const jobId = jobMeta.id
 
@@ -44,16 +67,18 @@ exports.handler = async (event, context) => {
             }
             let inputArtifactsMeta = jobMeta["data"]["inputArtifacts"]
 
+            console.debug("[newman Lambda] Checking for input artifacts")
             if (inputArtifactsMeta.length < 1) {
                 reject("Skipping. No input artifacts found.")
                 return false
             }
 
+            console.debug("[newman Lambda] Checking for a valid build artifact")
             let url = null
             for (let inputArtifactMeta of inputArtifactsMeta) {
                 if (inputArtifactMeta.name === "BuildArtifact") {
                     url = await getArtifactURL(inputArtifactMeta.location.s3Location.bucketName, inputArtifactMeta.location.s3Location.objectKey)
-                    break;
+                    break
                 }
             }
 
@@ -62,49 +87,40 @@ exports.handler = async (event, context) => {
                 return false
             }
 
-            const file = fs.createWriteStream(tmpBuildArtifactPath);
-            const request = await httpRequest(url).then((response) => {
-                response.pipe(file)
-                file.on('finish', () => {
-                    file.close()
-                });
-                return true;
-            }).catch(error => {
-                fs.unlink(tmpBuildArtifactPath);
-                return error;
-            })
+            console.debug(`[newman Lambda] Obtained the build artifact from AWS: ${url}`)
 
-            if (request !== true) {
-                reject(request)
-                return false;
-            }
-
+            console.debug("[newman Lambda] Opening the build artifact (zip)")
             try {
-                newmanFiles = await decompress(tmpBuildArtifactPath, '/tmp/dist').then(
-                    (files) => {
-                        const fileData = {
-                            environmentFile: null,
-                            testFile: null
-                         }
-
-                        for (let file of files) {
-                            if (file.path == "newman.development.env.json") {
-                                fileData.environmentFile = file.data.toString('utf8');
-                            }
-                            if (file.path == "newman.tests.json") {
-                                fileData.testFile = file.data.toString('utf8');
-                            }
-                        }
-
-                        return fileData;
-                    }
-                );
+                console.debug(`[newman Lambda] Write to temp file: ${tmpBuildArtifactPath}`)
+                const request = await download(url, tmpBuildArtifactPath)
             } catch(error) {
                 reject(error)
                 return false
             }
 
+            console.debug("[newman Lambda] Decompressing the zip")
+            try {
+                await decompress(tmpBuildArtifactPath, '/tmp/dist')
+                .then(
+                    (files) => {
+                        for (let file of files) {
+                            if (file.path === "newman.development.env.json") {
+                                newmanFiles.environmentFile = file.data.toString('utf8')
+                            }
+                            if (file.path === "newman.tests.json") {
+                                newmanFiles.testFile = file.data.toString('utf8')
+                            }
+                        }
+                    }
+                )
+            } catch(error) {
+                reject(error)
+                return false
+            }
+
+            console.debug("[newman Lambda] Checking to make sure we have our newman files")
             if (newmanFiles.environmentFile !== null && newmanFiles.testFile !== null) {
+                console.debug("[newman Lambda] Running newman tests (parsing files directly from disk/memory)")
                 newman.run({
                     collection: JSON.parse(newmanFiles.testFile),
                     environment: JSON.parse(newmanFiles.environmentFile),
@@ -124,12 +140,12 @@ exports.handler = async (event, context) => {
                 })
             } else {
                 reject(`Newman URLs were not set. Missing artifacts?`)
-                return false;
+                return false
             }
 
-            return true;
+            return true
         }
-    );
+    )
 
     return result.then(
         async (success) => {
@@ -138,7 +154,7 @@ exports.handler = async (event, context) => {
         }
     ).catch(
         async (error) => {
-            console.error(error);
+            console.error(error)
             await CodePipeline.putJobFailureResult({ jobId, failureDetails: { type: "JobFailed", message: error.toString(), externalExecutionId: context.awsRequestId } }).promise()
             return error
         }
