@@ -10,7 +10,7 @@
   "license": "ISC",
   "dependencies": {
     "aws-sdk": "^2.602.0",
-    "decompress": "^4.2.0",
+    "decompress": "^4.2.1",
     "newman": "^4.5.7"
   }
 }
